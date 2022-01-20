@@ -1,0 +1,4 @@
+hal_teledyne_dalsa_genie:
+  ros__parameters:
+    
+    hz: 10
