@@ -82,7 +82,7 @@ class HALGenieCam : public rclcpp::Node {
 				found = true;
 				found_idx = idx;
 			}
-			else if(model.compare("auto" == 0))
+			else if(model.compare("auto") == 0){
 				found = true;
 				found_idx = idx;
 				break;
