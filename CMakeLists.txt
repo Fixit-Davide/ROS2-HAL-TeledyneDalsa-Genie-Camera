@@ -30,13 +30,11 @@ find_package(rosidl_default_generators REQUIRED)
 FIND_LIBRARY(GEVAPI_LIBRARY GevApi /usr/local/lib/)
 FIND_LIBRARY(GCBASE_LIBRARY GCBase_gcc421_v3_0 /opt/genicam_v3_0/bin/Linux64_x64)
 
-include_directories(include
-                    #/usr/local/lib
+include_directories(include)
+
+include_directories(SYSTEM 
                     /usr/dalsa/GigeV/include
-                    /opt/genicam_v3_0/library/CPP/include/
-                    #/usr/lib
-                    #/opt/genicam_v3_0/bin/Linux64_x64/
-                    /usr/include
+                    /opt/genicam_v3_0/library/CPP/include
 )
 
 add_executable(hal_teledyne_dalsa_genie src/hal_teledyne_dalsa_genie.cpp)
