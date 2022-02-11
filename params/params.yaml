@@ -7,7 +7,7 @@ hal_teledyne_dalsa_genie:
 
     debugging_mode: False
     
-    framerate: 100
+    framerate: 100.0
     exposure_time: 6e+04
     auto_brightness: False
 
