@@ -1,13 +1,13 @@
 hal_teledyne_dalsa_genie:
   ros__parameters:
     
-    hz: 10
+    hz: 10.0
 
     camera_model: Nano-M640 ### auto for first camera
 
     debugging_mode: False
     
-    framerate: 100.0
+    framerate: 100
     exposure_time: 6e+04
     auto_brightness: False
 
