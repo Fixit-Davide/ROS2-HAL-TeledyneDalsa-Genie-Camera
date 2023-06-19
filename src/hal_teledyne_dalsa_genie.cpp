@@ -29,17 +29,26 @@ using namespace std::chrono_literals;
 namespace ph = std::placeholders;
 
 #define MAX_CAMERAS 10
-#define NUM_BUF	1
+#define NUM_BUF	10
 
 class HALGenieCam : public rclcpp::Node {
  public:
 
-  HALGenieCam() : Node("hal_teledyne_dalsa_genie") {
+	HALGenieCam() : Node("hal_teledyne_dalsa_genie") {
+		hz = declare_parameter<float>("hz", 100.0);
+		model = declare_parameter("camera_model", "auto");
+		camera_link = declare_parameter("frames.camera_link", "camera_link");
+		debugging_mode = declare_parameter<bool>("debugging_mode", false);
+		framerate = declare_parameter<int>("framerate", 100);
+		exposure_time = declare_parameter<float>("exposure_time", 6e+04);
+		auto_brightness = declare_parameter<bool>("auto_brightness", false);
 
-    GevGetLibraryConfigOptions( &options);
+		GevApiInitialize();
+
+		GevGetLibraryConfigOptions( &options);
 		//options.logLevel = GEV_LOG_LEVEL_OFF;
 		//options.logLevel = GEV_LOG_LEVEL_TRACE;
-		options.logLevel = GEV_LOG_LEVEL_NORMAL;
+		options.logLevel = GEV_LOG_LEVEL_WARNINGS;
 		GevSetLibraryConfigOptions( &options);
 
 		height = 0;
@@ -52,31 +61,20 @@ class HALGenieCam : public rclcpp::Node {
 
 		is_init = false;
 		first_display = true;
-  }
+  	}
   
-  bool init() {
+  	bool init() {
     	status = GevGetCameraList( pCamera, MAX_CAMERAS, &numCamera);
 
 		if (status != 0 or numCamera == 0){
-			std::cerr << "Error in communication via GigE" << std::endl;
+			RCLCPP_ERROR(get_logger(), "No camera found.");
 			return false;
 		}
 
-		int idx;
 		int found_idx;
 		bool found = false;
 
-   		hz = declare_parameter<float>("hz", 100.0);
-    	model = declare_parameter("camera_model", "auto");
-    	camera_link = declare_parameter("frames.camera_link", "camera_link");
-    	debugging_mode = declare_parameter<bool>("debugging_mode", false);
-    	framerate = declare_parameter<int>("framerate", 100);
-    	exposure_time = declare_parameter<float>("exposure_time", 6e+04);
-    	auto_brightness = declare_parameter<bool>("auto_brightness", false);
-
-
-		for(idx = 0; idx < numCamera; idx ++)
-		{
+		for(int idx = 0; idx < numCamera; idx ++){
 			std::cout << "Found: " << pCamera[idx].model << std::endl;
 			if(model.compare(pCamera[idx].model) == 0){
 				found = true;
@@ -87,7 +85,6 @@ class HALGenieCam : public rclcpp::Node {
 				found_idx = idx;
 				break;
 			}
-
 		}
 
 		if(found == false){
@@ -98,54 +95,28 @@ class HALGenieCam : public rclcpp::Node {
 			return false;
 		}
 
-		std::cout << "Genie " << pCamera[idx].model << " found with id " << found_idx << std::endl;
-		//====================================================================
-		// Open the camera.
+		std::cout << "Genie " << pCamera[found_idx].model << " found with id " << found_idx << std::endl;
+
 		status = GevOpenCamera( &pCamera[found_idx], GevExclusiveMode, &handle);
-		if (status == 0)
-		{
-			//=================================================================
-			// GenICam feature access via Camera XML File enabled by "open"
-			// 
-			// Get the name of XML file name back (example only - in case you need it somewhere).
-			//
-			char xmlFileName[MAX_PATH] = {0};
-			status = GevGetGenICamXML_FileName( handle, (int)sizeof(xmlFileName), xmlFileName);
-		}
-		else{
-			std::cerr << "Error opening Genie Camera" << std::endl;
+		if (status != 0){
+			RCLCPP_ERROR(get_logger(), "Error opening the camera.");
 			return false;
 		}
 
-		// Adjust the camera interface options if desired (see the manual)
 		GevGetCameraInterfaceOptions( handle, &camOptions);
-
-		if (debugging_mode){
-			camOptions.heartbeat_timeout_ms = 60000;			// For debugging (delay camera timeout while in debugger)
-		}
-		else {
-			camOptions.heartbeat_timeout_ms = 5000;				// Disconnect detection (5 seconds)
-		}
-
-		// Some tuning can be done here. (see the manual)
-		camOptions.streamFrame_timeout_ms = 1001;				// Internal timeout for frame reception.
-		camOptions.streamNumFramesBuffered = 4;					// Buffer frames internally.
-		camOptions.streamMemoryLimitMax = 64*1024*1024;			// Adjust packet memory buffering limit.	
-		camOptions.streamPktSize = 9000;						// Adjust the GVSP packet size.
-		camOptions.streamPktDelay = 10;							// Add usecs between packets to pace arrival at NIC.
-		
-		// Write the adjusted interface options back.
+		//camOptions.streamFrame_timeout_ms = 1001;				// Internal timeout for frame reception.
+		camOptions.streamNumFramesBuffered = 10;					// Buffer frames internally.
+		//camOptions.streamMemoryLimitMax = 64*1024*1024;			// Adjust packet memory buffering limit.	
+		//camOptions.streamPktSize = 9000;						// Adjust the GVSP packet size.
+		//camOptions.streamPktDelay = 10;							// Add usecs between packets to pace arrival at NIC.
 		GevSetCameraInterfaceOptions( handle, &camOptions);
 
 		//=====================================================================
 		// Get the GenICam FeatureNodeMap object and access the camera features.
 		Camera = static_cast<GenApi::CNodeMapRef*>(GevGetFeatureNodeMap(handle));
-		if (Camera)
-		{
+		if (Camera){
 			// Access some features using the bare GenApi interface methods
-			try 
-			{
-				//Mandatory features....
+			try {
 				GenApi::CIntegerPtr ptrIntNode = Camera->_GetNode("Width");
 				width = (UINT32) ptrIntNode->GetValue();
 				ptrIntNode = Camera->_GetNode("Height");
@@ -155,21 +126,18 @@ class HALGenieCam : public rclcpp::Node {
 				GenApi::CEnumerationPtr ptrEnumNode = Camera->_GetNode("PixelFormat") ;
 				format = (UINT32)ptrEnumNode->GetIntValue();
 			}
-			// Catch all possible exceptions from a node access.
-			// (There should be no errors since all of these are MANDATORY features.)
 			CATCH_GENAPI_ERROR(status);
-		}
-		else
-		{
+		} else {
 			std::cerr << "Error accessing Genie Camera" << std::endl;
 			return false;
 		}
 
-		GevSetFeatureValueAsString(handle, "ChunkModeActive", "0");
-		GevSetFeatureValueAsString(handle, "chunkCompatibilityMode", "GenAPI");		
+		//GevSetFeatureValueAsString(handle, "ChunkModeActive", "0");
+		//GevSetFeatureValueAsString(handle, "chunkCompatibilityMode", "GenAPI");		
 		GevSetFeatureValueAsString(handle, "OffsetX", "0");	
 		GevSetFeatureValueAsString(handle, "OffsetY", "0");	
 		//GevSetFeatureValueAsString(handle, "GevSCPSPacketSize", "9000");	
+		GevSetFeatureValueAsString(handle, "acquisitionFrameRateControlMode", "Programmable");	
 		GevSetFeatureValueAsString(handle, "AcquisitionFrameRate", std::to_string(framerate).c_str());	
 		GevSetFeatureValueAsString(handle, "ExposureTime", std::to_string(exposure_time).c_str());
 
@@ -184,10 +152,8 @@ class HALGenieCam : public rclcpp::Node {
 
 		size = payload_size;
 		
-		for (i = 0; i < numBuffers; i++)
-		{
+		for (i = 0; i < numBuffers; i++){
 			bufAddress[i] = (PUINT8)malloc(size);
-			memset(bufAddress[i], 0, size);
 		}
 
 		// Initialize a transfer with synchronous buffer handling.
@@ -199,21 +165,17 @@ class HALGenieCam : public rclcpp::Node {
 			std::cerr << "GevInitializeTransfer - status: GEVLIB_ERROR_ARG_INVALID" << std::endl;
 		else if(status == GEVLIB_ERROR_SOFTWARE)
 			std::cerr << "GevInitializeTransfer - status: GEVLIB_ERROR_SOFTWARE" << std::endl;
-	 				
-		if (status != GEVLIB_OK)
-		{
+		
+		if (status != GEVLIB_OK){
 			std::cerr << "Error initializing transfer with Genie Camera" << std::endl;
 			return false;
 		}
 
-		for (i = 0; i < numBuffers; i++)
-		{
+		for (i = 0; i < numBuffers; i++){
 			memset(bufAddress[i], 0, size);
 		}
 
-		//status = GevInitializeTransfer( handle, Asynchronous, size, numBuffers, bufAddress);
-
-	 	status = GevStartTransfer( handle, -1);
+	 	status = GevStartTransfer(handle, -1);
 
 		if(status == GEVLIB_ERROR_INVALID_HANDLE)
 			std::cerr << "GevStartTransfer - status: GEVLIB_ERROR_INVALID_HANDLE" << std::endl;
@@ -227,11 +189,13 @@ class HALGenieCam : public rclcpp::Node {
 			std::cerr << "GevStartTransfer - status: GEVLIB_ERROR_XFER_ACTIVE" << std::endl;
 
 
-		if(status == GEVLIB_OK)
-		{
+		if(status == GEVLIB_OK){
 			is_init = true;
 			cam_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("image_topic", 1);
-			timer_ = this->create_wall_timer(1000ms/hz, std::bind(&HALGenieCam::timer_callback, this));
+			//timer_ = this->create_wall_timer(1000ms/hz, std::bind(&HALGenieCam::timer_callback, this));
+			while(true){
+				timer_callback();
+			}
 			return true;
 		}
 		return false;
@@ -243,12 +207,10 @@ class HALGenieCam : public rclcpp::Node {
   
 	void disconnect(){
 		
-			if(is_init)
-			{
+			if(is_init){
 				this->close_connection();
 			}
 
-			// Close socket API
 			_CloseSocketAPI ();	// must close API even on error
 	}
 
@@ -260,21 +222,20 @@ class HALGenieCam : public rclcpp::Node {
 		}
 
 		// Wait for images to be received
-		status_gev = GevWaitForNextImage(handle, &img, 2000);
+		status_gev = GevWaitForNextFrame(handle, &img, 2000);
 
 		if(status_gev == GEVLIB_ERROR_INVALID_HANDLE)
-			std::cerr << "GevWaitForNextImage - status: GEVLIB_ERROR_INVALID_HANDLE" << std::endl;
+			std::cerr << "GevWaitForNextFrame - status: GEVLIB_ERROR_INVALID_HANDLE" << std::endl;
 		else if(status_gev == GEVLIB_ERROR_TIME_OUT)
-			std::cerr << "GevWaitForNextImage - status: GEVLIB_ERROR_TIME_OUT" << std::endl;
+			std::cerr << "GevWaitForNextFrame - status: GEVLIB_ERROR_TIME_OUT" << std::endl;
 		else if(status_gev == GEVLIB_ERROR_NULL_PTR)
-			std::cerr << "GevWaitForNextImage - status: GEVLIB_ERROR_NULL_PTR" << std::endl;
+			std::cerr << "GevWaitForNextFrame - status: GEVLIB_ERROR_NULL_PTR" << std::endl;
 
 		if(status_gev != GEVLIB_OK)
 			return false;
 
 		// See if there is metadata appended to the frame.
-		if (img->chunk_data != NULL )
-		{
+		if (img->chunk_data != NULL){
 			std::cerr << "Chunk Data Received" << std::endl;
 			return false;
 		}
@@ -337,13 +298,12 @@ class HALGenieCam : public rclcpp::Node {
 	}
 
 
-    void timer_callback()
-    {
+    void timer_callback(){
 		auto buf = std::make_shared<std::vector<uint8_t>>();
 
 		if(get_mono_frame(buf))
 		{
-			auto message = std::make_shared<sensor_msgs::msg::Image>();
+			auto message = std::make_unique<sensor_msgs::msg::Image>();
 
 			message->header.stamp = get_clock()->now();
 			message->header.frame_id = camera_link;
@@ -355,14 +315,11 @@ class HALGenieCam : public rclcpp::Node {
 
 			message->is_bigendian = 0;
 
-			message->step = this->height;
+			message->step = this->width;
 
-			message->data = *(buf.get());
+			message->data = std::move(*(buf.get()));
 
-			std::cout << "Image width: " << this->width << std::endl;
-			std::cout << "Image height: " << this->height << std::endl;
-
-			cam_publisher_->publish(*(message.get()));
+			cam_publisher_->publish(std::move(message));
 		}
     }
 

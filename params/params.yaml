@@ -7,9 +7,9 @@ hal_teledyne_dalsa_genie:
 
     debugging_mode: False
     
-    framerate: 100
+    framerate: 15
     exposure_time: 6e+04
-    auto_brightness: False
+    auto_brightness: true
 
     frames:
       camera_link: camera_link
